@@ -14,32 +14,41 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
   onClose,
   onShowToast,
 }) => {
-  const [messages, setMessages] = useState<VoiceChatMessage[]>([
-    {
-      id: 'welcome',
-      role: 'model',
-      text: `Hola, ${user.name ? user.name.split(' ')[0] : 'colega'}. Soy la Dra. Sofía, psicóloga del programa Conecta & Brilla. Este es tu espacio seguro, confidencial y sin juicios. Tómate una inhalación suave y cuéntame: ¿cómo te sientes en este momento de tu jornada?`,
-      timestamp: 'Ahora',
-    },
-  ]);
+  const [messages, setMessages] = useState<VoiceChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [hasSpeechSupport, setHasSpeechSupport] = useState(true);
   const [transcriptDraft, setTranscriptDraft] = useState('');
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const isComponentMounted = useRef(true);
 
-  // Initialize Web Speech API & Synthesis
+  // Initialize welcome message dynamically for the current active user
   useEffect(() => {
+    const userFirstName = user.name ? user.name.split(' ')[0] : 'colega';
+    const welcomeText = `Hola, ${userFirstName}. Soy la Dra. Sofía, psicóloga de bienestar y salud laboral en Conecta & Brilla. Este es tu espacio confidencial y seguro para desahogarte, procesar cualquier tensión de tu jornada y reencontrar tu equilibrio. Tómate una inhalación suave y cuéntame con tranquilidad: ¿cómo te sientes en este momento?`;
+
+    setMessages([
+      {
+        id: 'msg_welcome_' + Date.now(),
+        role: 'model',
+        text: welcomeText,
+        timestamp: 'Ahora',
+      },
+    ]);
+  }, [user.name]);
+
+  // Setup Web Speech API & Synthesis
+  useEffect(() => {
+    isComponentMounted.current = true;
     if (typeof window !== 'undefined') {
       synthRef.current = window.speechSynthesis;
 
-      // Speech Recognition setup
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -52,89 +61,97 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
 
           recognition.onstart = () => {
             setIsListening(true);
+            setSpeechError(null);
             setTranscriptDraft('');
           };
 
           recognition.onresult = (event: any) => {
-            let current = '';
+            let fullTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; i++) {
-              current += event.results[i][0].transcript;
+              fullTranscript += event.results[i][0].transcript;
             }
-            setTranscriptDraft(current);
-            setInputText(current);
+            setTranscriptDraft(fullTranscript);
+            setInputText(fullTranscript);
           };
 
-          recognition.onerror = (err: any) => {
-            console.warn('Speech recognition notice:', err);
+          recognition.onerror = (event: any) => {
+            console.warn('SpeechRecognition error:', event.error);
             setIsListening(false);
-            if (err.error === 'not-allowed') {
-              onShowToast('Permiso de micrófono no habilitado. Puedes escribir tu mensaje.', 'mic_off', 'info');
+            if (event.error === 'not-allowed') {
+              setSpeechError('Acceso al micrófono no concedido. Puedes escribir tu mensaje abajo.');
+              onShowToast('Permiso de micrófono no otorgado. Puedes escribir.', 'mic_off', 'info');
+            } else if (event.error === 'no-speech') {
+              setSpeechError(null);
             }
           };
 
           recognition.onend = () => {
             setIsListening(false);
+            // If we have captured text, auto-send or let user confirm
+            if (transcriptDraft.trim().length > 3) {
+              handleSendMessage(transcriptDraft.trim());
+            }
           };
 
           recognitionRef.current = recognition;
         } catch (e) {
-          console.warn('Could not initialize SpeechRecognition:', e);
-          setHasSpeechSupport(false);
+          console.warn('Could not setup SpeechRecognition:', e);
         }
-      } else {
-        setHasSpeechSupport(false);
       }
     }
 
     return () => {
+      isComponentMounted.current = false;
       if (synthRef.current) {
         synthRef.current.cancel();
       }
       if (recognitionRef.current) {
         try {
-          recognitionRef.current.stop();
+          recognitionRef.current.abort();
         } catch {
           // ignore
         }
       }
     };
-  }, []);
+  }, [transcriptDraft]);
 
-  // Auto-scroll chat to bottom
+  // Auto-scroll chat
   useEffect(() => {
     if (isOpen) {
       chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isOpen, isThinking, isListening]);
 
-  // Voice synthesis function: soft, calm, warm, and paused
-  const speakText = (text: string) => {
+  // Voice synthesis with soft, calm, warm, and paused tone
+  const speakText = (textToSpeak: string) => {
     if (!voiceEnabled || !synthRef.current) return;
 
     try {
-      synthRef.current.cancel(); // cancel previous utterances
+      synthRef.current.cancel(); // cancel any active utterance
 
-      const utterance = new SpeechSynthesisUtterance(text);
+      const cleanText = textToSpeak.replace(/[*#_~]/g, ''); // strip markdown
+      const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.lang = 'es-ES';
-      // Voice configuration: soft, paused and serene
+
+      // Warm, paused and empathetic voice configuration
       utterance.rate = 0.88; // pausado
-      utterance.pitch = 0.98; // cálido y natural
+      utterance.pitch = 0.98; // cálido
       utterance.volume = 1.0;
 
-      // Try selecting the best natural sounding Spanish voice
+      // Select Spanish voice
       const voices = synthRef.current.getVoices();
-      const spanishVoice = voices.find(
+      const preferredVoice = voices.find(
         (v) =>
           v.lang.startsWith('es') &&
           (v.name.includes('Natural') ||
             v.name.includes('Google') ||
-            v.name.includes('Paulina') ||
             v.name.includes('Monica') ||
+            v.name.includes('Paulina') ||
             v.name.includes('Helena'))
       ) || voices.find((v) => v.lang.startsWith('es'));
 
-      if (spanishVoice) {
-        utterance.voice = spanishVoice;
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
       }
 
       utterance.onstart = () => setIsSpeaking(true);
@@ -157,7 +174,11 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
 
   const toggleListening = () => {
     if (!recognitionRef.current) {
-      onShowToast('El reconocimiento de voz no está soportado en este navegador. Puedes escribir.', 'keyboard', 'info');
+      onShowToast(
+        'El reconocimiento de voz no está habilitado en este navegador. Puedes escribir tu mensaje.',
+        'keyboard',
+        'info'
+      );
       return;
     }
 
@@ -169,20 +190,21 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
       }
       setIsListening(false);
     } else {
-      // Stop ongoing speech before listening
       handleStopSpeaking();
+      setSpeechError(null);
+      setTranscriptDraft('');
       try {
         recognitionRef.current.start();
-        onShowToast('Escuchando... Háblale a la Dra. Sofía con tranquilidad.', 'mic');
+        onShowToast('Escuchándote... Habla libremente con la Dra. Sofía 🎤', 'mic');
       } catch (err) {
-        console.warn('Recognition start error:', err);
+        console.warn('Failed to start recognition:', err);
       }
     }
   };
 
-  const handleSendMessage = async (userPrompt?: string) => {
-    const textToSend = userPrompt || inputText;
-    if (!textToSend.trim() || isThinking) return;
+  const handleSendMessage = async (textPrompt?: string) => {
+    const messageContent = textPrompt || inputText;
+    if (!messageContent.trim() || isThinking) return;
 
     handleStopSpeaking();
     if (isListening && recognitionRef.current) {
@@ -194,25 +216,24 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
       setIsListening(false);
     }
 
-    const newUserMsg: VoiceChatMessage = {
-      id: 'user_' + Date.now(),
+    const userMessage: VoiceChatMessage = {
+      id: 'usr_' + Date.now(),
       role: 'user',
-      text: textToSend.trim(),
+      text: messageContent.trim(),
       timestamp: 'Ahora',
     };
 
-    setMessages((prev) => [...prev, newUserMsg]);
+    setMessages((prev) => [...prev, userMessage]);
     setInputText('');
     setTranscriptDraft('');
     setIsThinking(true);
 
     try {
-      // Call server-side psychological assistant API
       const response = await fetch('/api/gemini/psychologist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userMessage: textToSend.trim(),
+          userMessage: messageContent.trim(),
           userContext: {
             name: user.name,
             role: user.role,
@@ -226,29 +247,31 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
       });
 
       const data = await response.json();
-      const replyText = data.reply || data.fallback || 'Estoy contigo. Respira hondo y avancemos juntas.';
+      const reply = data.reply || 'Te escucho con cariño. Tómate una respiración suave y avancemos juntas.';
 
-      const newModelMsg: VoiceChatMessage = {
-        id: 'model_' + Date.now(),
+      const psychologistMessage: VoiceChatMessage = {
+        id: 'psy_' + Date.now(),
         role: 'model',
-        text: replyText,
+        text: reply,
         timestamp: 'Ahora',
       };
 
-      setMessages((prev) => [...prev, newModelMsg]);
+      setMessages((prev) => [...prev, psychologistMessage]);
       setIsThinking(false);
 
-      // Speak answer with warm, soft clinical psychologist voice
-      speakText(replyText);
+      // Speak output with warm psychologist tone
+      speakText(reply);
     } catch (err) {
-      console.error('Error fetching psychologist reply:', err);
+      console.error('Error in psychologist voice chat:', err);
       setIsThinking(false);
+
       const fallbackReply =
-        'Comprendo la situación que atraviesas y quiero recordarte que es completamente válido sentirte sobrepasada en ocasiones. Hagamos una pausa breve: suelta los hombros, exhala despacio y date permiso de atender una sola cosa a la vez.';
+        `Te escucho atentamente, ${user.name ? user.name.split(' ')[0] : 'colega'}. Reconozco lo desafiante que puede ser lo que estás viviendo. Recuerda que no tienes que resolver todas las exigencias a la vez. Suelta la tensión de tu espalda y permítete un respiro consciente.`;
+
       setMessages((prev) => [
         ...prev,
         {
-          id: 'model_' + Date.now(),
+          id: 'psy_' + Date.now(),
           role: 'model',
           text: fallbackReply,
           timestamp: 'Ahora',
@@ -258,11 +281,11 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
     }
   };
 
-  const starterChips = [
+  const quickStarters = [
     'Siento mucha sobrecarga laboral hoy 😣',
     'Tengo dudas con el síndrome del impostor 💭',
-    'Guíame en un ejercicio de respiración guiada 🫁',
-    'Tuve una conversación difícil con un compañero 💬',
+    'Guíame en un ejercicio de respiración consciente 🫁',
+    'Tuve una conversación tensa con un compañero de equipo 💬',
   ];
 
   if (!isOpen) return null;
@@ -301,14 +324,16 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
           </div>
 
           <div className="flex items-center gap-1">
-            {/* Toggle voice button */}
             <button
               type="button"
               onClick={() => {
                 const next = !voiceEnabled;
                 setVoiceEnabled(next);
                 if (!next) handleStopSpeaking();
-                onShowToast(next ? 'Voz de la psicóloga activada' : 'Voz silenciada (modo lectura)', next ? 'volume_up' : 'volume_off');
+                onShowToast(
+                  next ? 'Voz activada (tono cálido)' : 'Voz silenciada (modo texto)',
+                  next ? 'volume_up' : 'volume_off'
+                );
               }}
               title={voiceEnabled ? 'Silenciar voz' : 'Activar voz'}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
@@ -320,7 +345,6 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
               </span>
             </button>
 
-            {/* Close button */}
             <button
               type="button"
               onClick={() => {
@@ -334,27 +358,25 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
           </div>
         </header>
 
-        {/* Dynamic Voice Status Aura Banner */}
+        {/* Dynamic Voice Status Banner with Real-time Wave Animation */}
         <div className="px-4 py-2 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border-b border-emerald-100/60 flex items-center justify-between text-xs text-slate-700">
           <div className="flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5">
-              {isSpeaking || isListening ? (
-                <>
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-                </>
-              ) : (
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400" />
-              )}
-            </span>
+            {/* Visualizer Wave */}
+            <div className="flex items-center gap-0.5 h-4">
+              <span className={`w-1 rounded-full bg-emerald-600 transition-all ${isSpeaking || isListening ? 'h-4 animate-pulse' : 'h-1.5'}`} />
+              <span className={`w-1 rounded-full bg-emerald-500 transition-all ${isSpeaking || isListening ? 'h-3 animate-pulse [animation-delay:0.1s]' : 'h-2'}`} />
+              <span className={`w-1 rounded-full bg-teal-600 transition-all ${isSpeaking || isListening ? 'h-4 animate-pulse [animation-delay:0.2s]' : 'h-1.5'}`} />
+              <span className={`w-1 rounded-full bg-emerald-600 transition-all ${isSpeaking || isListening ? 'h-2.5 animate-pulse [animation-delay:0.3s]' : 'h-1'}`} />
+            </div>
+
             <span className="text-[11px] font-semibold text-slate-800">
               {isListening
-                ? 'Escuchándote con empatía...'
+                ? 'Escuchándote en tiempo real... Di lo que sientes'
                 : isThinking
-                ? 'Procesando con cuidado tu mensaje...'
+                ? 'Dra. Sofía está reflexionando tu mensaje...'
                 : isSpeaking
-                ? 'Dra. Sofía hablando con tono cálido y pausado...'
-                : 'Espacio activo • Voz pausada configurada'}
+                ? 'Hablando con voz suave, pausada y empática...'
+                : 'Lista para escucharte • Pulsa el micrófono'}
             </span>
           </div>
 
@@ -362,12 +384,20 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
             <button
               type="button"
               onClick={handleStopSpeaking}
-              className="text-[10px] text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full font-bold hover:bg-rose-100"
+              className="text-[10px] text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full font-bold hover:bg-rose-100 transition-colors"
             >
-              Detener voz
+              Pausar voz
             </button>
           )}
         </div>
+
+        {/* Live speech error or notice */}
+        {speechError && (
+          <div className="px-4 py-1.5 bg-amber-50 text-amber-900 text-[11px] border-b border-amber-200/50 flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[14px] text-amber-700">info</span>
+            <span>{speechError}</span>
+          </div>
+        )}
 
         {/* Chat History View */}
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3.5 no-scrollbar">
@@ -400,7 +430,7 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
                       <span className="material-symbols-outlined text-[14px]">
                         volume_up
                       </span>
-                      <span>Escuchar</span>
+                      <span>Escuchar de nuevo</span>
                     </button>
                   </div>
                 )}
@@ -408,13 +438,12 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
             );
           })}
 
-          {/* Thinking animation */}
           {isThinking && (
-            <div className="flex items-center gap-2 p-3.5 bg-white border border-slate-100 rounded-2xl w-fit shadow-xs animate-pulse">
+            <div className="flex items-center gap-2 p-3 bg-white border border-slate-100 rounded-2xl w-fit shadow-xs animate-pulse">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" />
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce [animation-delay:0.2s]" />
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce [animation-delay:0.4s]" />
-              <span className="text-xs text-slate-500 font-medium">Dra. Sofía está reflexionando...</span>
+              <span className="text-xs text-slate-500 font-medium">Procesando respuesta terapéutica...</span>
             </div>
           )}
 
@@ -422,9 +451,9 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
         </div>
 
         {/* Suggestion Chips */}
-        {messages.length <= 3 && (
+        {messages.length <= 4 && (
           <div className="px-4 py-1.5 flex gap-1.5 overflow-x-auto no-scrollbar">
-            {starterChips.map((chip, idx) => (
+            {quickStarters.map((chip, idx) => (
               <button
                 key={idx}
                 type="button"
@@ -437,15 +466,16 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
           </div>
         )}
 
-        {/* Voice Input Bottom Dock */}
-        <footer className="p-3.5 bg-white border-t border-slate-100 flex flex-col gap-2">
-          {/* Real-time draft speech preview */}
-          {isListening && transcriptDraft && (
-            <div className="p-2 bg-emerald-50 text-emerald-950 rounded-xl text-xs italic border border-emerald-200 animate-in fade-in">
-              "{transcriptDraft}"
-            </div>
-          )}
+        {/* Live Speech Draft Preview */}
+        {isListening && transcriptDraft && (
+          <div className="mx-4 mb-2 p-2.5 bg-emerald-50/90 text-emerald-950 rounded-xl text-xs border border-emerald-200 flex items-center gap-2 animate-in fade-in">
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            <span className="italic font-medium">"{transcriptDraft}"</span>
+          </div>
+        )}
 
+        {/* Bottom Interactive Voice Dock */}
+        <footer className="p-3.5 bg-white border-t border-slate-100 flex flex-col gap-2">
           <div className="flex items-center gap-2">
             {/* Interactive Mic Button */}
             <button
@@ -456,7 +486,7 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
                   ? 'bg-rose-600 text-white shadow-rose-600/40 animate-pulse'
                   : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/30'
               }`}
-              title={isListening ? 'Detener micrófono' : 'Hablar por micrófono'}
+              title={isListening ? 'Detener micrófono' : 'Hablar por micrófono con la Dra. Sofía'}
             >
               <span className="material-symbols-outlined text-[24px]">
                 {isListening ? 'mic' : 'mic'}
@@ -499,7 +529,7 @@ export const VoicePsychologistModal: React.FC<VoicePsychologistModalProps> = ({
 
           <div className="flex items-center justify-center gap-2 text-[10px] text-slate-400">
             <span className="material-symbols-outlined text-[12px]">lock</span>
-            <span>Espacio privado y protegido • Orientación psicológica de bienestar</span>
+            <span>Espacio confidencial • Psicología clínica y de bienestar organizacional</span>
           </div>
         </footer>
       </div>

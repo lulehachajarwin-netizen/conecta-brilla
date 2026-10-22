@@ -1,7 +1,15 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { getCompletedDaysCount } from '../data/challenges365';
-import { extractDisplayName } from '../lib/supabase';
+import {
+  extractDisplayName,
+  sendPasswordReset,
+  configureSupabase,
+  activeSupabaseUrl,
+  activeSupabaseKey,
+  isRealSupabaseConfigured,
+  SUPABASE_SQL_SCHEMA,
+} from '../lib/supabase';
 
 interface ProfileScreenProps {
   user: UserProfile;
@@ -23,6 +31,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(user.name);
   const [editRole, setEditRole] = useState(user.role);
+
+  // Admin password reset helper state
+  const [adminTargetEmail, setAdminTargetEmail] = useState('');
+  const [showAdminResetForm, setShowAdminResetForm] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [inputUrl, setInputUrl] = useState(activeSupabaseUrl);
+  const [inputKey, setInputKey] = useState(activeSupabaseKey);
+  const [sqlCopied, setSqlCopied] = useState(false);
+
   const completedCount = getCompletedDaysCount();
   const displayName = extractDisplayName(user.name, user.email);
 
@@ -35,7 +52,35 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       role: editRole.trim(),
     });
     setIsEditing(false);
-    onShowToast('¡Perfil actualizado con éxito!', 'check_circle', 'celebrate');
+    onShowToast('¡Perfil actualizado y sincronizado en la base de datos!', 'check_circle', 'celebrate');
+  };
+
+  const handleAdminResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminTargetEmail.trim()) return;
+
+    const res = await sendPasswordReset(adminTargetEmail.trim());
+    onShowToast(res.message, res.success ? 'mark_email_read' : 'error', res.success ? 'celebrate' : 'info');
+    setAdminTargetEmail('');
+    setShowAdminResetForm(false);
+  };
+
+  const handleSaveConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = configureSupabase(inputUrl, inputKey);
+    if (ok) {
+      setShowConfigModal(false);
+      onShowToast('¡Configuración de Supabase actualizada correctamente!', 'check_circle', 'celebrate');
+    } else {
+      onShowToast('La URL debe comenzar con https://', 'warning');
+    }
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard?.writeText(SUPABASE_SQL_SCHEMA);
+    setSqlCopied(true);
+    setTimeout(() => setSqlCopied(false), 2500);
+    onShowToast('¡Script SQL copiado! Pégalo en el SQL Editor de Supabase.', 'content_copy', 'celebrate');
   };
 
   return (
@@ -88,7 +133,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 type="submit"
                 className="px-4 py-1 rounded-full bg-emerald-600 text-white text-xs font-bold"
               >
-                Guardar
+                Guardar en Supabase
               </button>
             </div>
           </form>
@@ -154,7 +199,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </span>
             <span className="text-[11px] text-slate-600">
               {user.isAdmin
-                ? 'Habilitado: Puedes publicar y editar comunicados de pausas activas'
+                ? 'Habilitado: Publicar comunicados y gestionar accesos'
                 : 'Deshabilitado: Modo colaboradora estándar'}
             </span>
           </div>
@@ -171,6 +216,92 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         >
           {user.isAdmin ? 'Desactivar' : 'Activar'}
         </button>
+      </section>
+
+      {/* Herramientas de Administrador: Restablecer Accesos / Contraseñas */}
+      {user.isAdmin && (
+        <section className="bg-surface-container-lowest rounded-3xl p-5 shadow-sm border border-slate-100 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[20px] text-amber-700">
+                lock_reset
+              </span>
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                Gestión de Accesos y Contraseñas
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAdminResetForm(!showAdminResetForm)}
+              className="text-xs font-bold text-emerald-700 hover:underline"
+            >
+              {showAdminResetForm ? 'Ocultar' : 'Restablecer'}
+            </button>
+          </div>
+
+          <p className="text-xs text-slate-600">
+            Como Administrador/Propietario, puedes enviar enlaces de restablecimiento de contraseña para cualquier colaboradora registrada en Supabase.
+          </p>
+
+          {showAdminResetForm && (
+            <form onSubmit={handleAdminResetPassword} className="flex flex-col gap-2 pt-1 border-t border-slate-100">
+              <input
+                type="email"
+                value={adminTargetEmail}
+                onChange={(e) => setAdminTargetEmail(e.target.value)}
+                placeholder="correo.colaboradora@empresa.com"
+                required
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900"
+              />
+              <button
+                type="submit"
+                className="w-full py-2 rounded-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all"
+              >
+                Enviar Enlace de Restablecimiento
+              </button>
+            </form>
+          )}
+        </section>
+      )}
+
+      {/* Supabase Connection & SQL Migration Panel */}
+      <section className="bg-surface-container-lowest rounded-3xl p-5 shadow-sm border border-slate-100 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[20px] text-emerald-700">
+              database
+            </span>
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+              Base de Datos Supabase
+            </h3>
+          </div>
+          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full">
+            {isRealSupabaseConfigured() ? 'Conectado a Proyecto' : 'Local + Supabase'}
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-600">
+          Tus datos (check-ins, retos diarios y comunicados) se persisten tanto en Supabase como en almacenamiento local permanente.
+        </p>
+
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleCopySql}
+            className="flex-1 py-2 px-3 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold hover:bg-emerald-100 transition-all flex items-center justify-center gap-1.5"
+          >
+            <span className="material-symbols-outlined text-[15px]">content_copy</span>
+            <span>{sqlCopied ? '¡SQL Copiado!' : 'Copiar Script SQL'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowConfigModal(true)}
+            className="py-2 px-4 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
+          >
+            Configurar
+          </button>
+        </div>
       </section>
 
       {/* Asistente de Voz Psicóloga Direct CTA */}
@@ -201,56 +332,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </section>
       )}
 
-      {/* Preferencias de Bienestar */}
-      <section className="bg-surface-container-lowest rounded-3xl p-5 shadow-sm border border-slate-100 flex flex-col gap-3">
-        <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-          Configuración Consciente &amp; Sesión
-        </h3>
-
-        <div className="flex flex-col divide-y divide-slate-100">
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-3">
-              <span className="material-symbols-outlined text-[20px] text-slate-500">
-                storage
-              </span>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-900">Estado de Sesión</span>
-                <span className="text-[11px] text-slate-500">
-                  {user.supabaseSessionActive ? 'Sincronizado con Supabase' : 'Sesión local activa'}
-                </span>
-              </div>
-            </div>
-            <span className="text-xs font-bold text-emerald-700">Conectado</span>
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-3">
-              <span className="material-symbols-outlined text-[20px] text-slate-500">
-                notifications_active
-              </span>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-900">Recordatorios de Pausa</span>
-                <span className="text-[11px] text-slate-500">Cada 90 minutos de trabajo</span>
-              </div>
-            </div>
-            <span className="text-xs font-bold text-emerald-700">Activado</span>
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-3">
-              <span className="material-symbols-outlined text-[20px] text-slate-500">
-                privacy_tip
-              </span>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-900">Privacidad Emocional</span>
-                <span className="text-[11px] text-slate-500">Respuestas anónimas en agregados</span>
-              </div>
-            </div>
-            <span className="text-xs font-bold text-emerald-700">Estricto</span>
-          </div>
-        </div>
-      </section>
-
       {/* Logout CTA */}
       <section className="flex flex-col gap-2">
         <button
@@ -263,9 +344,75 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </button>
 
         <p className="text-center text-[11px] text-slate-400">
-          Conecta &amp; Brilla • Versión 2.0 (365 Días &amp; Asistente de Voz)
+          Conecta &amp; Brilla • Supabase Auth &amp; Persistencia Permanente
         </p>
       </section>
+
+      {/* Supabase Config Modal */}
+      {showConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-100 flex flex-col gap-3">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">
+                Credenciales de Proyecto Supabase
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowConfigModal(false)}
+                className="w-7 h-7 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveConfig} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-800">
+                  Supabase Project URL
+                </label>
+                <input
+                  type="url"
+                  value={inputUrl}
+                  onChange={(e) => setInputUrl(e.target.value)}
+                  placeholder="https://xyzproject.supabase.co"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 font-mono"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-800">
+                  Supabase Anon Key
+                </label>
+                <input
+                  type="text"
+                  value={inputKey}
+                  onChange={(e) => setInputKey(e.target.value)}
+                  placeholder="eyJhbGciOi..."
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 font-mono text-[11px]"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowConfigModal(false)}
+                  className="px-3 py-1.5 rounded-full text-xs text-slate-600 font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
+                >
+                  Guardar Conexión
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

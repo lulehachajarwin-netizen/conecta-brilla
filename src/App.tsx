@@ -16,7 +16,16 @@ import { Toast } from './components/Toast';
 import { VoiceAssistantFloatingButton } from './components/VoiceAssistantFloatingButton';
 import { VoicePsychologistModal } from './components/VoicePsychologistModal';
 import { getTodayChallenge, setDayChallengeCompleted } from './data/challenges365';
-import { extractDisplayName, saveActiveSessionUser, clearSession } from './lib/supabase';
+import {
+  extractDisplayName,
+  saveActiveSessionUser,
+  getStoredSessionUser,
+  syncUserProfile,
+  recordEmotionalCheckin,
+  recordChallengeCompletion,
+  syncAnnouncement,
+  signOutUser,
+} from './lib/supabase';
 
 const INITIAL_USER: UserProfile = {
   name: 'Alejandra Santos',
@@ -90,16 +99,8 @@ const INITIAL_CHALLENGES: ChallengeItem[] = [
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('dashboard');
   const [user, setUser] = useState<UserProfile>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('conecta_active_user_session');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch {
-          // fallback
-        }
-      }
-    }
+    const stored = getStoredSessionUser();
+    if (stored) return stored;
     return INITIAL_USER;
   });
 
@@ -151,28 +152,44 @@ export default function App() {
     });
   };
 
-  // Sync user state changes to storage
+  // Sync user state changes to storage and Supabase
   useEffect(() => {
     saveActiveSessionUser(user);
   }, [user]);
 
-  // Sync announcement updates to storage
+  // Handle emotional check-in with immediate Supabase & local persistence
+  const handleSelectMood = (mood: MoodType) => {
+    setSelectedMood(mood);
+    const feedbackMap: Record<MoodType, string> = {
+      energia: '¡Energía radiante! 🌟 Aprovecha este impulso para inspirar tu jornada con alegría.',
+      calma: '¡Serenidad plena! 🌿 Mantén ese foco consciente y avanza con tranquilidad paso a paso.',
+      cansada: 'Tu descanso es prioridad. ☁️ Regálate micro-pausas suaves y mantén una postura relajada.',
+      estresada: 'Inhala hondo y suelta los hombros. ⚡ Recuerda que puedes atender una tarea a la vez.',
+    };
+    const feedback = feedbackMap[mood] || 'Registro de energía guardado';
+
+    // Persist immediately to Supabase database
+    recordEmotionalCheckin(user.id || 'usr_' + user.email, user.email, mood, feedback);
+  };
+
+  // Sync announcement updates to Supabase and storage
   const handleUpdateAnnouncement = (updated: Announcement) => {
     setAnnouncement(updated);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('conecta_team_announcement', JSON.stringify(updated));
-    }
+    syncAnnouncement(updated);
   };
 
   // Toggle admin role for testing publishing capabilities
   const handleToggleAdminRole = () => {
     const nextIsAdmin = !user.isAdmin;
     const nextRole = nextIsAdmin ? 'Administrador de Bienestar' : 'Especialista de Equipo';
-    setUser((prev) => ({
-      ...prev,
+    const updatedUser = {
+      ...user,
       isAdmin: nextIsAdmin,
       role: nextRole,
-    }));
+    };
+    setUser(updatedUser);
+    syncUserProfile(updatedUser);
+
     showToast(
       nextIsAdmin
         ? '¡Rol cambiado a Administrador! Ahora puedes publicar y editar comunicados. 📢'
@@ -182,33 +199,21 @@ export default function App() {
     );
   };
 
-  // Login handler
-  const handleLoginSuccess = (userData: { email: string; name?: string; isAdmin?: boolean }) => {
-    const resolvedName = userData.name || extractDisplayName(userData.name, userData.email);
-    const isAdmin = Boolean(userData.isAdmin);
-    const updatedUser: UserProfile = {
-      ...user,
-      email: userData.email,
-      name: resolvedName,
-      isAdmin,
-      role: isAdmin ? 'Administrador de Bienestar' : 'Especialista de Equipo',
-      avatarUrl: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(resolvedName)}`,
-      supabaseSessionActive: true,
-    };
-
-    setUser(updatedUser);
-    saveActiveSessionUser(updatedUser);
+  // Login handler with Supabase profile sync
+  const handleLoginSuccess = (authenticatedUser: UserProfile) => {
+    setUser(authenticatedUser);
+    syncUserProfile(authenticatedUser);
     setCurrentScreen('dashboard');
   };
 
-  // Logout handler
-  const handleLogout = () => {
-    clearSession();
+  // Logout handler with Supabase signout
+  const handleLogout = async () => {
+    await signOutUser();
     setCurrentScreen('login');
     showToast('Sesión cerrada. Regresaste a la pantalla de acceso.', 'logout');
   };
 
-  // Complete 365 daily challenge
+  // Complete 365 daily challenge with immediate Supabase persistence
   const handleComplete365DayChallenge = (dayNumber: number) => {
     const isCurrentlyDone = todayChallenge.dayOfYear === dayNumber && todayChallenge.completed;
     const nextDoneState = !isCurrentlyDone;
@@ -225,16 +230,27 @@ export default function App() {
 
     if (nextDoneState) {
       const addedPoints = todayChallenge.points || 50;
-      setUser((prev) => ({
-        ...prev,
-        points: prev.points + addedPoints,
-        streakDays: prev.streakDays + 1,
-        progressPercent: Math.min(100, prev.progressPercent + 15),
-        teamCompletedBreaks: prev.teamCompletedBreaks + 1,
-      }));
+      const updatedUser: UserProfile = {
+        ...user,
+        points: user.points + addedPoints,
+        streakDays: user.streakDays + 1,
+        progressPercent: Math.min(100, user.progressPercent + 15),
+        teamCompletedBreaks: user.teamCompletedBreaks + 1,
+      };
+
+      setUser(updatedUser);
+      // Persist to Supabase database and local cache
+      syncUserProfile(updatedUser);
+      recordChallengeCompletion(
+        user.id || 'usr_' + user.email,
+        'daily_365',
+        `day_${dayNumber}`,
+        dayNumber,
+        addedPoints
+      );
 
       showToast(
-        `¡Excelente! 🌟 Completaste el Reto del Día ${dayNumber} (+${addedPoints} pts).`,
+        `¡Excelente! 🌟 Completaste el Reto del Día ${dayNumber} (+${addedPoints} pts guardados en base de datos).`,
         'celebration',
         'celebrate'
       );
@@ -243,7 +259,7 @@ export default function App() {
     }
   };
 
-  // Complete complementary micro-challenges
+  // Complete complementary micro-challenges with Supabase persistence
   const handleCompleteChallenge = (challengeId: string) => {
     const targetChallenge = challenges.find((c) => c.id === challengeId);
     if (!targetChallenge || targetChallenge.completed) return;
@@ -261,12 +277,22 @@ export default function App() {
     if (completedCount === 1) newProgress = 85;
     if (completedCount >= 2) newProgress = 100;
 
-    setUser((prev) => ({
-      ...prev,
+    const updatedUser: UserProfile = {
+      ...user,
       points: newPoints,
       progressPercent: newProgress,
-      teamCompletedBreaks: prev.teamCompletedBreaks + 1,
-    }));
+      teamCompletedBreaks: user.teamCompletedBreaks + 1,
+    };
+
+    setUser(updatedUser);
+    syncUserProfile(updatedUser);
+    recordChallengeCompletion(
+      user.id || 'usr_' + user.email,
+      'card',
+      challengeId,
+      undefined,
+      addedPoints
+    );
 
     showToast(
       `¡Bien hecho! 🌟 Sumaste +${addedPoints} pts a tu bienestar.`,
@@ -452,7 +478,7 @@ export default function App() {
                   <DashboardScreen
                     user={user}
                     selectedMood={selectedMood}
-                    onSelectMood={setSelectedMood}
+                    onSelectMood={handleSelectMood}
                     announcement={announcement}
                     onUpdateAnnouncement={handleUpdateAnnouncement}
                     onToggleAdminRole={handleToggleAdminRole}
