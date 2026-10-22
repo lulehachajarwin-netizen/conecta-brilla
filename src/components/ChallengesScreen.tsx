@@ -1,10 +1,17 @@
-import React from 'react';
-import { UserProfile, ChallengeItem } from '../types';
+import React, { useState } from 'react';
+import { UserProfile, ChallengeItem, DailyChallenge365, ChallengeCategory } from '../types';
+import {
+  getDayOfYear,
+  getChallengeForDay,
+  ALL_365_CHALLENGES,
+  getCompletedDaysCount,
+} from '../data/challenges365';
 
 interface ChallengesScreenProps {
   user: UserProfile;
   challenges: ChallengeItem[];
   onCompleteChallenge: (challengeId: string) => void;
+  onComplete365DayChallenge: (dayNumber: number) => void;
   onResetChallenges: () => void;
   onShowToast: (message: string, icon?: string, type?: 'success' | 'info' | 'celebrate') => void;
 }
@@ -13,14 +20,42 @@ export const ChallengesScreen: React.FC<ChallengesScreenProps> = ({
   user,
   challenges,
   onCompleteChallenge,
+  onComplete365DayChallenge,
   onResetChallenges,
   onShowToast,
 }) => {
-  const uncompletedCount = challenges.filter((c) => !c.completed).length;
+  const currentTodayNumber = getDayOfYear();
+  const [selectedDayNumber, setSelectedDayNumber] = useState<number>(currentTodayNumber);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<ChallengeCategory | 'Todos'>('Todos');
+  const [reflectionInput, setReflectionInput] = useState('');
+  const [savedReflections, setSavedReflections] = useState<Record<number, string>>({});
+
+  const activeChallenge: DailyChallenge365 = getChallengeForDay(selectedDayNumber);
+  const completed365Count = getCompletedDaysCount();
+  const isViewingToday = selectedDayNumber === currentTodayNumber;
+
+  const handleDayChange = (newDay: number) => {
+    const clamped = Math.max(1, Math.min(newDay, 365));
+    setSelectedDayNumber(clamped);
+  };
+
+  const handleSaveReflection = (dayNumber: number) => {
+    if (!reflectionInput.trim()) return;
+    setSavedReflections((prev) => ({
+      ...prev,
+      [dayNumber]: reflectionInput.trim(),
+    }));
+    setReflectionInput('');
+    onShowToast('Reflexión registrada en tu bitácora de bienestar. 📝', 'edit_note', 'info');
+  };
+
+  const handleToggleDailyComplete = () => {
+    onComplete365DayChallenge(selectedDayNumber);
+  };
 
   return (
     <div className="flex flex-col w-full max-w-md mx-auto px-4 pt-20 pb-28 gap-5">
-      {/* Tarjeta de Progreso & Estado Gamificado */}
+      {/* 1. Tarjeta de Progreso & Estado Gamificado */}
       <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-surface-container-low via-surface-container to-surface-container-high p-5 shadow-sm border border-slate-100">
         <div className="absolute -right-10 -top-10 w-36 h-36 rounded-full bg-primary-fixed/30 blur-2xl pointer-events-none" />
         <div className="absolute -left-8 -bottom-8 w-32 h-32 rounded-full bg-tertiary-fixed/30 blur-xl pointer-events-none" />
@@ -50,7 +85,7 @@ export const ChallengesScreen: React.FC<ChallengesScreenProps> = ({
             </div>
           </div>
 
-          {/* Nivel & Meta */}
+          {/* Nivel & Meta 365 */}
           <div className="flex flex-col gap-1 mt-1">
             <div className="flex items-center justify-between text-slate-900">
               <div className="flex items-center gap-2">
@@ -61,8 +96,8 @@ export const ChallengesScreen: React.FC<ChallengesScreenProps> = ({
                   Nivel {user.level}: {user.levelTitle}
                 </span>
               </div>
-              <span className="text-sm font-extrabold text-primary">
-                {user.progressPercent}%
+              <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                {completed365Count} / 365 Días
               </span>
             </div>
             <p className="text-xs text-slate-600">
@@ -90,7 +125,6 @@ export const ChallengesScreen: React.FC<ChallengesScreenProps> = ({
             </div>
 
             <div className="grid grid-cols-3 gap-2">
-              {/* Badge 1 */}
               <button
                 type="button"
                 onClick={() =>
@@ -111,7 +145,6 @@ export const ChallengesScreen: React.FC<ChallengesScreenProps> = ({
                 </span>
               </button>
 
-              {/* Badge 2 */}
               <button
                 type="button"
                 onClick={() =>
@@ -132,7 +165,6 @@ export const ChallengesScreen: React.FC<ChallengesScreenProps> = ({
                 </span>
               </button>
 
-              {/* Badge 3 */}
               <button
                 type="button"
                 onClick={() =>
@@ -157,136 +189,262 @@ export const ChallengesScreen: React.FC<ChallengesScreenProps> = ({
         </div>
       </section>
 
-      {/* Encabezado de Sección de Retos */}
-      <section className="flex flex-col gap-1 select-none">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-            Retos del Día
-          </h2>
-          <span
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all ${
-              uncompletedCount > 0
-                ? 'bg-emerald-100 text-emerald-900'
-                : 'bg-amber-100 text-amber-900'
+      {/* 2. Sistema de Retos Diarios 365 Días (Destacado del Día) */}
+      <section className="flex flex-col gap-3">
+        {/* Encabezado y Navegador de Días */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                <span>Retos Diarios (365 Días)</span>
+                <span className="text-amber-500 text-base">✨</span>
+              </h2>
+              <p className="text-xs text-slate-600">
+                Un reto diferente y automático para cada día del año.
+              </p>
+            </div>
+
+            {isViewingToday && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 text-xs font-bold shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+                <span>Hoy</span>
+              </span>
+            )}
+          </div>
+
+          {/* Selector y Navegación Rápida entre Días */}
+          <div className="flex items-center justify-between gap-2 p-2 bg-surface-container-lowest rounded-2xl border border-slate-100 shadow-xs">
+            <button
+              type="button"
+              disabled={selectedDayNumber <= 1}
+              onClick={() => handleDayChange(selectedDayNumber - 1)}
+              className="p-1.5 rounded-xl hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 transition-colors"
+              title="Día anterior"
+            >
+              <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-extrabold text-slate-900">
+                Día {selectedDayNumber} de 365
+              </span>
+
+              {!isViewingToday && (
+                <button
+                  type="button"
+                  onClick={() => handleDayChange(currentTodayNumber)}
+                  className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-bold hover:bg-emerald-100 transition-colors"
+                >
+                  Volver a Hoy
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={selectedDayNumber >= 365}
+              onClick={() => handleDayChange(selectedDayNumber + 1)}
+              className="p-1.5 rounded-xl hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 transition-colors"
+              title="Día siguiente"
+            >
+              <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tarjeta Principal del Reto Seleccionado (365 Días) */}
+        <article
+          className={`relative rounded-3xl p-5 shadow-sm transition-all duration-300 flex flex-col gap-4 border ${
+            activeChallenge.completed
+              ? 'bg-gradient-to-br from-emerald-50/90 to-teal-50/90 border-emerald-200'
+              : 'bg-surface-container-lowest border-slate-100 hover:shadow-md'
+          }`}
+        >
+          {/* Header Row */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${activeChallenge.categoryBg} ${activeChallenge.categoryText}`}
+              >
+                <span className="material-symbols-outlined text-[15px]">
+                  {activeChallenge.actionIcon}
+                </span>
+                <span>
+                  {activeChallenge.category} • {activeChallenge.duration}
+                </span>
+              </span>
+            </div>
+
+            <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold shadow-xs">
+              <span>+{activeChallenge.points} pts</span>
+              <span className="material-symbols-outlined text-[15px] material-symbols-fill">
+                auto_awesome
+              </span>
+            </div>
+          </div>
+
+          {/* Title & Description */}
+          <div className="flex flex-col gap-1.5">
+            <h3
+              className={`text-base font-extrabold leading-snug ${
+                activeChallenge.completed
+                  ? 'text-emerald-950 font-bold'
+                  : 'text-slate-900'
+              }`}
+            >
+              {activeChallenge.title}
+            </h3>
+            <p className="text-xs text-slate-600 leading-relaxed font-normal">
+              {activeChallenge.description}
+            </p>
+          </div>
+
+          {/* Reflection Prompt Box */}
+          <div className="p-3 bg-surface-container-low rounded-2xl flex flex-col gap-2 border border-slate-100">
+            <div className="flex items-center gap-1.5 text-slate-700">
+              <span className="material-symbols-outlined text-[16px] text-amber-600 material-symbols-fill">
+                psychology_alt
+              </span>
+              <span className="text-[11px] font-bold">
+                Pregunta de Reflexión Consciente:
+              </span>
+            </div>
+            <p className="text-xs text-slate-800 italic font-medium">
+              "{activeChallenge.reflectionPrompt}"
+            </p>
+
+            {savedReflections[selectedDayNumber] ? (
+              <div className="p-2 bg-white rounded-xl text-xs text-emerald-900 border border-emerald-100 font-medium">
+                Tu reflexión: "{savedReflections[selectedDayNumber]}"
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 pt-1">
+                <input
+                  type="text"
+                  value={reflectionInput}
+                  onChange={(e) => setReflectionInput(e.target.value)}
+                  placeholder="Escribe tu breve respuesta reflexiva..."
+                  className="flex-1 px-3 py-1.5 text-xs bg-white rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-normal"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSaveReflection(selectedDayNumber)}
+                  disabled={!reflectionInput.trim()}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                >
+                  Guardar
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Complete Action Button */}
+          <button
+            type="button"
+            onClick={handleToggleDailyComplete}
+            className={`w-full h-12 rounded-full font-bold text-xs xs:text-sm flex items-center justify-center gap-2 shadow-xs transition-all duration-200 cursor-pointer ${
+              activeChallenge.completed
+                ? 'bg-emerald-600 text-white shadow-emerald-600/30 font-bold hover:bg-emerald-700'
+                : 'bg-primary hover:bg-emerald-700 text-white active:scale-[0.98]'
             }`}
           >
-            {uncompletedCount > 0 ? (
+            {activeChallenge.completed ? (
               <>
-                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-ping" />
-                <span>{uncompletedCount} disponibles</span>
+                <span className="material-symbols-outlined text-[20px] font-bold">
+                  task_alt
+                </span>
+                <span>¡Reto del Día {selectedDayNumber} Completado! (+{activeChallenge.points} pts)</span>
               </>
             ) : (
               <>
-                <span>🎉</span>
-                <span>¡Todos completados!</span>
+                <span className="material-symbols-outlined text-[20px]">
+                  check_circle
+                </span>
+                <span>Completar Reto del Día {selectedDayNumber}</span>
               </>
             )}
-          </span>
-        </div>
-        <p className="text-xs text-slate-600 leading-relaxed">
-          Pequeñas acciones cotidianas con un gran impacto en tu bienestar y en el de tu equipo.
-        </p>
+          </button>
+        </article>
       </section>
 
-      {/* Lista de Retos Diarios */}
-      <section className="flex flex-col gap-4">
-        {challenges.map((challenge) => {
-          return (
+      {/* 3. Retos Complementarios de Apoyo */}
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">
+            Micro-Acciones de Conexión en Equipo
+          </h3>
+          <span className="text-[11px] text-slate-500 font-semibold">
+            Diarias
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          {challenges.map((challenge) => (
             <article
               key={challenge.id}
-              className={`relative rounded-3xl p-5 shadow-sm transition-all duration-300 flex flex-col gap-3.5 border ${
+              className={`relative rounded-3xl p-4 shadow-sm transition-all duration-200 flex flex-col gap-3 border ${
                 challenge.completed
-                  ? 'bg-slate-50/90 border-slate-200/80 opacity-95'
-                  : 'bg-surface-container-lowest border-slate-100 hover:shadow-md'
+                  ? 'bg-slate-50 border-slate-200'
+                  : 'bg-surface-container-lowest border-slate-100 hover:shadow-xs'
               }`}
             >
-              {/* Challenge Top Badges */}
               <div className="flex items-start justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${challenge.categoryBg} ${challenge.categoryText}`}
-                  >
-                    <span className="material-symbols-outlined text-[15px]">
-                      {challenge.actionIcon}
-                    </span>
-                    <span>
-                      {challenge.category} • {challenge.duration}
-                    </span>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${challenge.categoryBg} ${challenge.categoryText}`}
+                >
+                  <span className="material-symbols-outlined text-[14px]">
+                    {challenge.actionIcon}
                   </span>
-                </div>
+                  <span>{challenge.category}</span>
+                </span>
 
-                <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold">
-                  <span>+{challenge.points} pts</span>
-                  <span className="material-symbols-outlined text-[15px] material-symbols-fill">
-                    auto_awesome
-                  </span>
-                </div>
+                <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-full">
+                  +{challenge.points} pts
+                </span>
               </div>
 
-              {/* Title & Description */}
               <div className="flex flex-col gap-1">
-                <h3
-                  className={`text-sm xs:text-base font-bold ${
-                    challenge.completed
-                      ? 'text-slate-700 line-through decoration-slate-400'
-                      : 'text-slate-900'
+                <h4
+                  className={`text-xs xs:text-sm font-bold ${
+                    challenge.completed ? 'line-through text-slate-500' : 'text-slate-900'
                   }`}
                 >
                   {challenge.title}
-                </h3>
-                <p className="text-xs text-slate-600 leading-relaxed">
+                </h4>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
                   {challenge.description}
                 </p>
               </div>
 
-              {/* Bottom action row: Image + Complete button */}
-              <div className="flex items-center gap-3 pt-1">
-                <div className="w-12 h-12 rounded-2xl overflow-hidden shrink-0 shadow-xs border border-slate-100 bg-slate-100">
-                  <img
-                    alt={challenge.imageAlt}
-                    className="w-full h-full object-cover"
-                    src={challenge.imageUrl}
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src =
-                        'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&w=150&q=80';
-                    }}
-                  />
-                </div>
-
-                {/* Challenge Action Button */}
-                <button
-                  type="button"
-                  disabled={challenge.completed}
-                  onClick={() => onCompleteChallenge(challenge.id)}
-                  className={`flex-1 h-12 rounded-full font-bold text-xs xs:text-sm flex items-center justify-center gap-2 shadow-xs transition-all duration-200 cursor-pointer ${
-                    challenge.completed
-                      ? 'bg-slate-200 text-slate-600 cursor-default shadow-none font-semibold'
-                      : challenge.category === 'Autocuidado'
-                      ? 'bg-primary text-white hover:bg-emerald-600 active:scale-[0.98]'
-                      : 'bg-secondary text-white hover:bg-sky-700 active:scale-[0.98]'
-                  }`}
-                  aria-pressed={challenge.completed}
-                >
-                  {challenge.completed ? (
-                    <>
-                      <span className="material-symbols-outlined text-[18px] text-emerald-700 font-bold">
-                        task_alt
-                      </span>
-                      <span>¡Completado!</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="material-symbols-outlined text-[18px]">
-                        check_circle
-                      </span>
-                      <span>Completar Reto</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={challenge.completed}
+                onClick={() => onCompleteChallenge(challenge.id)}
+                className={`w-full h-10 rounded-full font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                  challenge.completed
+                    ? 'bg-slate-200 text-slate-600'
+                    : 'bg-secondary text-white hover:bg-sky-700 active:scale-98'
+                }`}
+              >
+                {challenge.completed ? (
+                  <>
+                    <span className="material-symbols-outlined text-[16px] text-emerald-700">
+                      task_alt
+                    </span>
+                    <span>Completado</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[16px]">
+                      check
+                    </span>
+                    <span>Marcar realizado</span>
+                  </>
+                )}
+              </button>
             </article>
-          );
-        })}
+          ))}
+        </div>
       </section>
 
       {/* Banner Resumen de Equipo Semanal */}

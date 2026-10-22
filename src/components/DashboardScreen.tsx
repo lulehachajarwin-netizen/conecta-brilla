@@ -1,12 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { MoodType, UserProfile, MoodOption } from '../types';
+import { MoodType, UserProfile, MoodOption, Announcement, DailyChallenge365 } from '../types';
+import { AnnouncementsBanner } from './AnnouncementsBanner';
+import { extractDisplayName } from '../lib/supabase';
 
 interface DashboardScreenProps {
   user: UserProfile;
   selectedMood: MoodType | null;
   onSelectMood: (mood: MoodType) => void;
+  announcement: Announcement;
+  onUpdateAnnouncement: (updated: Announcement) => void;
+  onToggleAdminRole?: () => void;
+  todayChallenge: DailyChallenge365;
+  onCompleteDailyChallenge: (dayNumber: number) => void;
   onShowToast: (message: string, icon?: string, type?: 'success' | 'info' | 'celebrate') => void;
   onNavigateToChallenges: () => void;
+  onOpenVoiceAssistant?: () => void;
 }
 
 const MOOD_OPTIONS: MoodOption[] = [
@@ -52,15 +60,34 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   user,
   selectedMood,
   onSelectMood,
+  announcement,
+  onUpdateAnnouncement,
+  onToggleAdminRole,
+  todayChallenge,
+  onCompleteDailyChallenge,
   onShowToast,
   onNavigateToChallenges,
+  onOpenVoiceAssistant,
 }) => {
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [isBreathingActive, setIsBreathingActive] = useState(false);
   const [breathPhase, setBreathPhase] = useState<'inhale' | 'hold' | 'exhale'>('inhale');
   const [breathSeconds, setBreathSeconds] = useState(4);
-  const [communityCheers, setCommunityCheers] = useState(18);
+  const [communityCheers, setCommunityCheers] = useState(24);
   const [hasCheered, setHasCheered] = useState(false);
+
+  // Dynamic user greeting name reading from active session
+  const dynamicGreetingName = extractDisplayName(user.name, user.email);
+
+  // Dynamic date formatting in Spanish
+  const todayDateString = new Intl.DateTimeFormat('es-ES', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date());
+
+  const capitalizedDate =
+    todayDateString.charAt(0).toUpperCase() + todayDateString.slice(1);
 
   // Breathing exercise timer
   useEffect(() => {
@@ -138,20 +165,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   return (
     <div className="flex flex-col w-full max-w-md mx-auto px-4 pt-20 pb-28 gap-5">
-      {/* Saludo Cálido y Racha */}
+      {/* 1. Saludo Dinámico por Usuario & Racha Activa */}
       <section className="flex flex-col gap-1 select-none">
         <div className="flex items-center justify-between">
           <span className="text-xs text-on-surface-variant flex items-center gap-1.5 text-slate-500 font-medium">
             <span className="material-symbols-outlined text-[16px] text-primary">
               calendar_today
             </span>
-            <span>Hoy, 24 de Octubre</span>
+            <span>{capitalizedDate}</span>
           </span>
 
           <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100/70 border border-amber-200/50 rounded-full shadow-xs">
-            <span
-              className="material-symbols-outlined text-[16px] text-amber-600 material-symbols-fill"
-            >
+            <span className="material-symbols-outlined text-[16px] text-amber-600 material-symbols-fill">
               local_fire_department
             </span>
             <span className="text-xs font-bold text-amber-900 tracking-tight">
@@ -162,12 +187,62 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
         <div className="mt-1">
           <h2 className="text-2xl xs:text-3xl font-extrabold text-on-surface tracking-tight text-slate-900 flex items-center gap-2">
-            <span>¡Hola, {user.name.split(' ')[0]}!</span>
+            <span>¡Hola, {dynamicGreetingName}!</span>
             <span className="text-emerald-700 animate-bounce">🌿</span>
           </h2>
-          <p className="text-xs xs:text-sm text-on-surface-variant text-slate-600 mt-0.5">
-            Tómate un respiro y conecta con tu momento presente.
-          </p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs xs:text-sm text-on-surface-variant text-slate-600">
+              Tómate un respiro y conecta con tu momento presente.
+            </p>
+            {user.isAdmin && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                Admin
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* 2. Módulo de Comunicados y Anuncios del Administrador (Pausas Activas) */}
+      <AnnouncementsBanner
+        announcement={announcement}
+        user={user}
+        onUpdateAnnouncement={onUpdateAnnouncement}
+        onToggleAdminRole={onToggleAdminRole}
+        onShowToast={onShowToast}
+      />
+
+      {/* 3. Reto Diario Automático 365 Días (Acceso Rápido del Día) */}
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-500 via-teal-600 to-emerald-700 text-white p-4 shadow-sm flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[11px] font-bold">
+            <span className="material-symbols-outlined text-[14px]">event_repeat</span>
+            <span>Reto de Hoy • Día {todayChallenge.dayOfYear} de 365</span>
+          </div>
+
+          <span className="text-[11px] font-bold bg-amber-400 text-amber-950 px-2 py-0.5 rounded-full">
+            +{todayChallenge.points} pts
+          </span>
+        </div>
+
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-1 min-w-0">
+            <h3 className="text-sm font-extrabold leading-snug">
+              {todayChallenge.title}
+            </h3>
+            <p className="text-[11px] text-emerald-100 line-clamp-2 leading-relaxed">
+              {todayChallenge.description}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onNavigateToChallenges}
+            className="px-3.5 py-2 rounded-full bg-white text-emerald-900 font-bold text-xs hover:bg-emerald-50 active:scale-95 transition-all shadow-sm shrink-0 flex items-center gap-1"
+          >
+            <span>Ver 365 Días</span>
+            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </button>
         </div>
       </section>
 
@@ -251,11 +326,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </div>
         )}
 
-        <div className="flex items-center gap-1.5 text-slate-400 pt-1">
-          <span className="material-symbols-outlined text-[14px]">lock</span>
-          <p className="text-[11px]">
-            Tu registro es 100% privado y confidencial.
-          </p>
+        <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center gap-1.5 text-slate-400">
+            <span className="material-symbols-outlined text-[14px]">lock</span>
+            <p className="text-[11px]">
+              Tu registro es 100% privado y confidencial.
+            </p>
+          </div>
+
+          {onOpenVoiceAssistant && (
+            <button
+              type="button"
+              onClick={onOpenVoiceAssistant}
+              className="text-[11px] text-emerald-700 font-bold hover:underline flex items-center gap-1"
+            >
+              <span className="material-symbols-outlined text-[14px]">psychology</span>
+              <span>Hablar con la psicóloga</span>
+            </button>
+          )}
         </div>
       </section>
 
@@ -263,9 +351,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       <section className="bg-gradient-to-br from-amber-100/80 via-amber-50 to-surface-container-lowest rounded-3xl p-5 shadow-sm border border-amber-200/40 relative flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/80 backdrop-blur-md rounded-full shadow-xs border border-amber-200/60">
-            <span
-              className="material-symbols-outlined text-[15px] text-amber-700 material-symbols-fill"
-            >
+            <span className="material-symbols-outlined text-[15px] text-amber-700 material-symbols-fill">
               wb_twilight
             </span>
             <span className="text-[11px] text-amber-900 font-bold tracking-tight">
@@ -384,31 +470,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </div>
       </section>
 
-      {/* Banner de Acceso a Retos del Día */}
-      <section className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white rounded-3xl p-4 shadow-sm flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white shrink-0 text-xl">
-            🏆
-          </div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-[11px] text-emerald-100 font-semibold uppercase tracking-wider">
-              Gamificación de Bienestar
-            </span>
-            <span className="text-xs font-bold truncate">
-              Tienes 2 retos diarios disponibles
-            </span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onNavigateToChallenges}
-          className="px-3.5 py-2 rounded-full bg-white text-emerald-900 font-bold text-xs hover:bg-emerald-50 active:scale-95 transition-all shadow-sm shrink-0"
-        >
-          Ver Retos
-        </button>
-      </section>
-
       {/* Comunidad Consciente */}
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
@@ -435,11 +496,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <img
             alt="Ambiente de oficina luminoso y tranquilo con compañeros de trabajo practicando estiramientos conscientes"
             className="w-full h-full object-cover"
-            src="https://lh3.googleusercontent.com/aida-public/AB6AXuBOS0zeEH___pH0j_lM_SR2sKJ3txOHueR05es7Kc3XVYSz_ECnAC5wzuWkS_vnxWeKAyKckH9wUqgG18HQbDI0r05byak5avwu0ABHuWKfC7tOlOI50bKoPM7xpLmLQVyqtbwgg45PUFnai0vD7Agp5AoW9wf9dPIvDNv63JlmXKC_H2aVRh7xUwHivtQRrPLuMM39RNkbh72psyWOPkzES8FfEZkVKbpBUfFqXAHDeFFgZFeT8w"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src =
-                'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80';
-            }}
+            src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-slate-900/20 to-transparent flex items-end p-4">
             <p className="text-xs text-white font-medium leading-snug">
