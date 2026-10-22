@@ -1,0 +1,8 @@
+{
+  "name": "Remix Conecta \u0026 Brilla - Bienestar Laboral",
+  "description": "Prototipo interactivo móvil para bienestar y pausas conscientes en el trabajo, con check-in emocional y retos diarios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
